@@ -97,11 +97,11 @@ fn make_vcard(first_name: &str, last_name: &str, tel: &str, mobile: &str, email:
 ///
 /// # Panics
 ///
-/// This function **does not panic**. Missing fields are safely replaced by empty strings.
+/// This function **does not panic**. Empty strings safely replace missing fields, and all errors are returned via `Result`.
 ///
 /// # Examples
 ///
-/// ```
+/// ```rust
 /// let data = vec![
 ///     "Alice".to_string(),
 ///     "Smith".to_string(),
@@ -128,19 +128,22 @@ fn make_vcard(first_name: &str, last_name: &str, tel: &str, mobile: &str, email:
 /// REV:1
 /// END:VCARD
 /// ```
-fn extract_vcard_data(vcard_data: &[String]) -> String {
-    let first  = vcard_data.get(0).map(|s| s.as_str()).unwrap_or("");
+fn extract_vcard_data(vcard_data: &[String]) -> io::Result<String> {
+    println!("{:?}", vcard_data);
+    let first  = vcard_data.get(0).map(|s| s.as_str()).ok_or_else(
+        || {println!("hello"); io::Error::new(io::ErrorKind::InvalidInput, "Invalid input, needs at least one field for first name")}
+    )?;
     let last   = vcard_data.get(1).map(|s| s.as_str()).unwrap_or("");
     let tel    = vcard_data.get(2).map(|s| s.as_str()).unwrap_or("");
     let mobile = vcard_data.get(3).map(|s| s.as_str()).unwrap_or("");
     let email  = vcard_data.get(4).map(|s| s.as_str()).unwrap_or("");
     let note   = vcard_data.get(5).map(|s| s.as_str()).unwrap_or("");
-    make_vcard(first, last, tel, mobile, email, note)
+    Ok(make_vcard(first, last, tel, mobile, email, note))
 }
 
 /// Writes the given data into a file.
 ///
-/// This function will create the file if it does not exist, or
+/// This function will create the file if it does not exist or
 /// overwrite it if it already exists. The data is written as-is
 /// from the provided string slice.
 ///
@@ -160,7 +163,7 @@ fn extract_vcard_data(vcard_data: &[String]) -> String {
 ///
 /// # Examples
 ///
-/// ```
+/// ```rust
 /// write_file("output.txt", "Hello World!").unwrap();
 /// ```
 ///
@@ -195,7 +198,7 @@ fn write_file<P: AsRef<Path>>(filename: P, data: &str) -> io::Result<()> {
 ///
 /// # Examples
 ///
-/// ```
+/// ```rust
 /// let records = read_csv_lines("data.csv").unwrap();
 /// for line in records {
 ///     println!("{line:?}");
@@ -229,6 +232,10 @@ fn read_csv_lines<P: AsRef<Path>>(filename: P) -> io::Result<Vec<Vec<String>>> {
             continue;
         }
         let split_values: Vec<String> = line.split(',').map(|data| data.to_string()).collect();
+        // Skip empty lines
+        if split_values.len() == 1 && split_values[0].is_empty() {
+            continue;
+        }
         records.push(split_values);
     }
 
@@ -258,7 +265,7 @@ fn read_csv_lines<P: AsRef<Path>>(filename: P) -> io::Result<Vec<Vec<String>>> {
 ///
 /// # Examples
 ///
-/// ```
+/// ```rust
 /// let input_file = "contacts/my_contacts.csv";
 /// let output_path = build_output_path(input_file, "vcf").unwrap();
 /// assert_eq!(output_path.to_str().unwrap(), "contacts/my_contacts.vcf");
@@ -293,6 +300,6 @@ fn main() -> io::Result<()> {
     let csv_filename = &args[1];
     let lines = read_csv_lines(csv_filename)?;
     let vcf_filename = build_output_path(csv_filename, "vcf")?;
-    let all_vcard: Vec<String> = lines.iter().map(|element| extract_vcard_data(element)).collect();
+    let all_vcard: Vec<String> = lines.iter().map(|element| extract_vcard_data(element)).collect::<io::Result<Vec<String>>>()?;
     write_file(&vcf_filename, &all_vcard.join("\n"))
 }
