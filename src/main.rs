@@ -2,7 +2,10 @@ use std::fmt::Write;
 use std::fs::File;
 use std::io::{Read, Write as ioWrite};
 use std::path::{Path, PathBuf};
-use std::{env, io};
+use std::io;
+
+use eframe::{egui, Frame};
+use egui::Context;
 
 /// Creates a simple VCard (version 2.1) for a contact.
 ///
@@ -290,16 +293,165 @@ fn build_output_path<P: AsRef<Path>>(input_path: P, output_extension: &str) -> i
     Ok(vcf_filename)
 }
 
-/// This program reads a CSV file containing contact information and generates a VCard file for each contact.
-fn main() -> io::Result<()> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        println!("Usage: cargo run {} file.csv", args[0]);
-        return Ok(());
-    }
-    let csv_filename = &args[1];
+/// Processes a CSV file and generates a VCard (`.vcf`) file.
+///
+/// This function reads a CSV file containing contact information,
+/// converts each row into a VCard (version 2.1), and writes all generated
+/// VCards into a single output file with the same name as the input CSV
+/// but with a `.vcf` extension.
+///
+/// The CSV file is expected to contain the following columns in order:
+///
+/// 1. First name
+/// 2. Last name
+/// 3. Phone number
+/// 4. Mobile phone number
+/// 5. Email address
+/// 6. Note (optional)
+///
+/// Extra columns are ignored. Missing columns are replaced with empty values.
+///
+/// # Arguments
+///
+/// * `csv_filename` - Path to the input CSV file. Can be a relative or absolute path.
+///
+/// # Returns
+///
+/// * `Ok(())` - If the CSV file was successfully processed and the VCard file written.
+/// * `Err(io::Error)` - If any error occurs while reading the CSV file,
+///   building the output path, generating VCards, or writing the output file.
+///
+/// # Errors
+///
+/// This function will return an error if:
+///
+/// * The CSV file cannot be opened or read.
+/// * The output file path cannot be constructed.
+/// * A CSV row contains invalid data.
+/// * The output file cannot be written.
+///
+/// Errors are propagated using the `?` operator.
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::io;
+///
+/// fn main() -> io::Result<()> {
+///     process_csv("contacts.csv")?;
+///     Ok(())
+/// }
+/// ```
+///
+/// If `contacts.csv` exists, this will generate a `contacts.vcf` file
+/// in the same directory.
+fn process_csv(csv_filename: &str) -> io::Result<()> {
     let lines = read_csv_lines(csv_filename)?;
     let vcf_filename = build_output_path(csv_filename, "vcf")?;
     let all_vcard: Vec<String> = lines.iter().map(|element| extract_vcard_data(element)).collect::<io::Result<Vec<String>>>()?;
     write_file(&vcf_filename, &all_vcard.join("\n"))
+}
+
+/// Application state for the VCard generator UI.
+///
+/// This struct holds the runtime state of the application,
+/// including the currently selected CSV file. It is used by
+/// the egui/eframe application to drive the user interface and
+/// trigger CSV-to-VCard processing.
+///
+/// # Fields
+///
+/// * `selected_file` - Path to the selected CSV file.
+///   - `Some(String)` when the user has chosen a file.
+///   - `None` when no file is selected yet.
+#[derive(Default)]
+struct VCardGenerator {
+    selected_file: Option<String>
+}
+
+/// Implements the egui application logic for the VCard generator.
+///
+/// This implementation defines the user interface and behavior of the
+/// application. It allows the user to:
+///
+/// - Open a file dialog restricted to CSV files
+/// - Select a CSV file containing contact data
+/// - Automatically process the selected file and generate a VCard file
+///
+/// The UI is rendered using `egui`, and the application state is stored
+/// in the `VCardGenerator` struct.
+///
+/// # Behavior
+///
+/// - When the "Open CSV file" button is clicked, a file picker dialog opens.
+/// - Once a file is selected, the CSV file is immediately processed.
+/// - If processing succeeds, a success message is displayed.
+/// - If processing fails, an error message is displayed.
+/// - After processing, the selected file state is reset.
+///
+/// # Notes
+///
+/// - The CSV processing is triggered inside the UI update loop.
+/// - For large files or long-running operations, this logic should be
+///   moved to a background thread to avoid blocking the UI.
+///
+/// # See Also
+///
+/// - [`process_csv`] — Handles CSV-to-VCard conversion.
+/// - [`VCardGenerator`] — Stores the application state.
+impl eframe::App for VCardGenerator {
+    fn update(&mut self, ctx: &Context, _: &mut Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.vertical_centered(|ui| {
+                if ui.add_sized([200.0, 40.0], egui::Button::new("Open CSV file")).clicked() {
+                    if let Some(path) = rfd::FileDialog::new().add_filter("CSV files", &["csv"]).pick_file() {
+                        self.selected_file = Some(path.display().to_string());
+                    }
+                }
+                if let Some(file) = &self.selected_file {
+                    match process_csv(file) {
+                        Ok(_) =>ui.label("Done !".to_string()),
+                        Err(_) => ui.label("Invalid input file".to_string())
+                    };
+                    self.selected_file = None;
+                }
+            });
+        });
+    }
+}
+
+/// Entry point of the VCard Generator application using `eframe`/`egui`.
+///
+/// This function initializes logging, configures the native window options,
+/// and launches the GUI application.
+///
+/// # Window Configuration
+///
+/// - Initial size: 300x100 pixels
+/// - Non-resizable
+/// - Maximize button disabled
+///
+/// # Logging
+///
+/// Logging is initialized via `env_logger`. To enable debug logs, run:
+/// ```text
+/// RUST_LOG=debug cargo run
+/// ```
+///
+/// # GUI
+///
+/// The GUI application is implemented in the `VCardGenerator` struct, which
+/// allows the user to pick a CSV file and automatically generate VCards.
+///
+/// # Returns
+///
+/// * `Ok(())` - if the GUI was successfully launched and ran without critical errors.
+/// * `Err(eframe::Error)` - if an error occurred while initializing or running the GUI.
+fn main() -> eframe::Result {
+    env_logger::init();
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default().with_inner_size([300.0, 100.0]).with_resizable(false).with_maximize_button(false),
+        ..Default::default()
+    };
+    eframe::run_native("VCard Generator", options, Box::new(|_| { Ok(Box::<VCardGenerator>::default()) }))
 }
